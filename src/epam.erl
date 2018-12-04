@@ -28,6 +28,7 @@
 -behaviour(gen_server).
 
 -include_lib("kernel/include/file.hrl").
+-include("hmx_controller/src/hmx_controller_logger.hrl").
 
 %% API
 -export([start_link/0, start/0, stop/0]).
@@ -36,10 +37,10 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2,
-	 handle_info/2, terminate/2, code_change/3]).
+         handle_info/2, terminate/2, code_change/3]).
 
--define(WARNING,
-	"File ~p is world-wide executable. This "
+-define(WARNING_MSG,
+        "File ~p is world-wide executable. This "
         "is a possible security hole in your "
         "system. This file must be setted root "
         "on execution and only erlang user must "
@@ -55,7 +56,7 @@
 
 start() ->
     ChildSpec = {?PROCNAME, {?MODULE, start_link, []},
-		 transient, 1000, worker, [?MODULE]},
+                 transient, 1000, worker, [?MODULE]},
     supervisor:start_child(epam_sup, ChildSpec).
 
 stop() ->
@@ -65,17 +66,17 @@ stop() ->
 
 start_link() ->
     gen_server:start_link({local, ?PROCNAME}, ?MODULE, [],
-			  []).
+                          []).
 
 authenticate(Srv, User, Pass)
     when is_binary(Srv), is_binary(User), is_binary(Pass) ->
     gen_server:call(?PROCNAME,
-		    {authenticate, Srv, User, Pass, <<"">>}).
+                    {authenticate, Srv, User, Pass, <<"">>}).
 
 authenticate(Srv, User, Pass, Rhost)
     when is_binary(Srv), is_binary(User), is_binary(Pass), is_binary(Rhost) ->
     gen_server:call(?PROCNAME,
-		    {authenticate, Srv, User, Pass, Rhost}).
+                    {authenticate, Srv, User, Pass, Rhost}).
 
 acct_mgmt(Srv, User)
     when is_binary(Srv), is_binary(User) ->
@@ -85,28 +86,28 @@ init([]) ->
     FileName = filename:join(get_bin_path(), "epam"),
     case file:read_file_info(FileName) of
       {ok, Info} ->
-	  Mode = Info#file_info.mode band 2049,
-	  if Mode == 2049 ->
-                  error_logger:error_msg(?WARNING, [FileName]);
-	     true -> ok
-	  end,
-	  Port = open_port({spawn, FileName},
-			   [{packet, 2}, binary, exit_status]),
-	  {ok, #state{port = Port}};
+          Mode = Info#file_info.mode band 2049,
+          if Mode == 2049 ->
+                  ?ERROR(?WARNING_MSG, [FileName]);
+             true -> ok
+          end,
+          Port = open_port({spawn, FileName},
+                           [{packet, 2}, binary, exit_status]),
+          {ok, #state{port = Port}};
       {error, Reason} ->
-            error_logger:error_msg("Can't open file ~p: ~p~n",
+            ?ERROR("Can't open file ~p: ~p~n",
                                    [FileName, Reason]),
-	  error
+          error
     end.
 
 terminate(_Reason, #state{port = Port}) ->
     catch port_close(Port), ok.
 
 handle_call({authenticate, Srv, User, Pass, Rhost}, From,
-	    State) ->
+            State) ->
     Port = State#state.port,
     Data = term_to_binary({?CMD_AUTH, From,
-			   {Srv, User, Pass, Rhost}}),
+                           {Srv, User, Pass, Rhost}}),
     port_command(Port, Data),
     {noreply, State};
 handle_call({acct_mgmt, Srv, User}, From, State) ->
@@ -120,20 +121,20 @@ handle_call(_Request, _From, State) ->
     {reply, bad_request, State}.
 
 handle_info({Port, {data, Data}},
-	    #state{port = Port} = State) ->
+            #state{port = Port} = State) ->
     case binary_to_term(Data) of
       {Cmd, To, Reply}
-	  when Cmd == (?CMD_AUTH); Cmd == (?CMD_ACCT) ->
-	  gen_server:reply(To, Reply);
+          when Cmd == (?CMD_AUTH); Cmd == (?CMD_ACCT) ->
+          gen_server:reply(To, Reply);
       Err ->
-	  error_logger:error_msg("Got invalid reply from ~p: ~p~n", [Port, Err])
+          ?ERROR("Got invalid reply from ~p: ~p~n", [Port, Err])
     end,
     {noreply, State};
 handle_info({Port, {exit_status, _}},
-	    #state{port = Port} = State) ->
+            #state{port = Port} = State) ->
     {stop, port_died, State};
 handle_info(Msg, State) ->
-    error_logger:error_msg("got unexpected message: ~p~n", [Msg]),
+    ?ERROR("got unexpected message: ~p~n", [Msg]),
     {noreply, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
@@ -141,14 +142,9 @@ handle_cast(_Msg, State) -> {noreply, State}.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 get_bin_path() ->
-    case os:getenv("EJABBERD_BIN_PATH") of
-	false ->
-	    case code:priv_dir(epam) of
-		{error, _} ->
-                    filename:join(["priv", "bin"]);
-		Path ->
-		    filename:join([Path, "bin"])
-	    end;
-	Path ->
-	    Path
+    case code:priv_dir(epam) of
+        {error, _} ->
+            filename:join(["priv", "bin"]);
+        Path ->
+            Path
     end.
