@@ -33,7 +33,7 @@
 %% API
 -export([start_link/0, start/0, stop/0]).
 
--export([authenticate/3, authenticate/4, acct_mgmt/2]).
+-export([authenticate/3, authenticate/4, acct_mgmt/2, change_passwd/4]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2,
@@ -51,6 +51,7 @@
 
 -define(CMD_AUTH, 0).
 -define(CMD_ACCT, 1).
+-define(CMD_CHAUTHTOK, 2).
 
 -record(state, {port}).
 
@@ -67,6 +68,11 @@ stop() ->
 start_link() ->
     gen_server:start_link({local, ?PROCNAME}, ?MODULE, [],
                           []).
+
+change_passwd(Srv, User, CurPass, NewPass)
+    when is_binary(Srv), is_binary(User), is_binary(CurPass), is_binary(NewPass) ->
+    gen_server:call(?PROCNAME,
+                    {change_passwd, Srv, User, CurPass, NewPass}).
 
 authenticate(Srv, User, Pass)
     when is_binary(Srv), is_binary(User), is_binary(Pass) ->
@@ -115,6 +121,12 @@ handle_call({acct_mgmt, Srv, User}, From, State) ->
     Data = term_to_binary({?CMD_ACCT, From, {Srv, User}}),
     port_command(Port, Data),
     {noreply, State};
+handle_call({change_passwd, Srv, User, CurPass, NewPass}, From, State) ->
+    Port = State#state.port,
+    Data = term_to_binary({?CMD_CHAUTHTOK, From,
+                           {Srv, User, CurPass, NewPass}}),
+    port_command(Port, Data),
+    {noreply, State};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(_Request, _From, State) ->
@@ -124,7 +136,9 @@ handle_info({Port, {data, Data}},
             #state{port = Port} = State) ->
     case binary_to_term(Data) of
       {Cmd, To, Reply}
-          when Cmd == (?CMD_AUTH); Cmd == (?CMD_ACCT) ->
+          when Cmd == (?CMD_AUTH); 
+               Cmd == (?CMD_ACCT);
+               Cmd == (?CMD_CHAUTHTOK) ->
           gen_server:reply(To, Reply);
       Err ->
           ?ERROR("Got invalid reply from ~p: ~p~n", [Port, Err])
