@@ -1,1 +1,1 @@
-EPAM_VSN=0.8.1
+EPAM_VSN=0.8.1.1
